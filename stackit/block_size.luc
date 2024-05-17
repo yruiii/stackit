@@ -1,0 +1,11 @@
+module block_size (
+    input clk,  // clock
+    input rst,  // reset
+    output out
+  ) {
+
+  always {
+    
+    out = 5b1;
+  }
+}

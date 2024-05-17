@@ -1,0 +1,257 @@
+module data_ram #(
+    ROW_DIMENSION = 4 : ROW_DIMENSION > 0,
+    COLUMN_DIMENSION = 4 : COLUMN_DIMENSION > 0,
+    ENCODING_AMOUNT = 4 : ENCODING_AMOUNT > 0
+    )(
+    input clk,  // clock
+    input rst,  // reset
+    input update,
+    input address[$clog2(ROW_DIMENSION*COLUMN_DIMENSION)],
+    input stack5_encoded[16],
+    input stack4_encoded[16],
+    input stack3_encoded[16],
+    input stack2_encoded[16],
+    input stack1_encoded[16],
+    input current_block[16],
+    output out_encoding[2],
+    output ready,
+    output debug_address_pointer[$clog2(ROW_DIMENSION*COLUMN_DIMENSION)],
+    output debug_data[3]
+  ) {
+  
+  const DEPTH =  COLUMN_DIMENSION * ROW_DIMENSION;
+  fsm writer(.clk(clk), .rst(rst)) = {
+    INIT,
+    RESET, 
+    STACK5,
+    STACK4,
+    STACK3,
+    STACK2,
+    STACK1,
+    CUR_BLOCK,
+    IDLE
+    };
+  dff writer_pointer[$clog2(DEPTH)](#INIT(0),.clk(clk), .rst(rst));
+  dff update_flag(#INIT(0), .clk(clk), .rst(rst));
+  dff block_len[3](#INIT(0),.clk(clk),.rst(rst));
+  dff dist_from_left[4](#INIT(0), .clk(clk),.rst(rst));
+  dff height[4](#INIT(0), .clk(clk),.rst(rst));
+  
+  const BACKGROUND_COLOR = b00;
+  const BLOCK_COLOR = b01;
+  
+  simple_dual_ram ram(.rclk(clk), .wclk(clk), #DEPTH(DEPTH), #SIZE($clog2(ENCODING_AMOUNT)));
+  
+  
+  
+  always {
+    ram.raddr = 0;
+    ram.waddr = 0;
+    ram.write_data = 0;
+    ram.write_en = 0;
+    out_encoding = 0;
+    debug_data = 0;
+
+    ready = writer.q == writer.IDLE;
+    debug_address_pointer = writer_pointer.q;
+    
+    // always catch any positive update request 
+    if (update){
+      update_flag.d = update;
+    }
+    
+    case (writer.q){
+      writer.INIT: 
+        // set all values to zero 
+        ram.write_en = b1; 
+        ram.waddr = writer_pointer.q; 
+        // these are test dots, to know your hardware orientation
+        if (writer_pointer.q == d0){
+          ram.write_data = b11; // white at RAM address 0, this will be your coordinate (0,0)
+        }
+        else if (writer_pointer.q == d7){
+           ram.write_data = b10; // test blue at RAM address 7
+        }
+        else if (&writer_pointer.q){
+            ram.write_data = b01;  // test red at RAM biggest RAM address
+        }
+        else{
+          ram.write_data = BACKGROUND_COLOR; 
+        }
+        writer_pointer.d = writer_pointer.q + 1; 
+        if (&writer_pointer.q){    //if writer_pointer at largest RAM address
+          writer_pointer.d = 0;
+          // advanced to write 
+          writer.d = writer.RESET;
+          
+        }
+        debug_data = b01;
+      
+      writer.RESET: 
+        ram.write_en = b1;
+        if(~&writer_pointer.q){
+          ram.waddr = writer_pointer.q;
+          ram.write_data = BACKGROUND_COLOR;
+          writer_pointer.d = writer_pointer.q + 1;
+          writer.d = writer.RESET;
+          }
+        else{
+          ram.waddr = writer_pointer.q;
+          ram.write_data = BACKGROUND_COLOR;  
+            
+          dist_from_left.d = stack5_encoded[7:4];
+          height.d = stack5_encoded[3:0];
+          block_len.d = d5;  
+          writer_pointer.d = (COLUMN_DIMENSION - dist_from_left.q) + 0;
+          
+          // advanced to write 
+          writer.d = writer.STACK5;
+          }
+        
+      writer.STACK5: 
+        ram.write_en = b1;
+        if (height.q){ 
+          if(block_len.q){
+            writer_pointer.d = writer_pointer.q - 1;
+            ram.waddr = writer_pointer.q;
+            block_len.d = block_len.q - 1;
+            ram.write_data = BLOCK_COLOR; // set pixel to light up
+          }
+          else{
+            height.d = height.q - 1;
+            block_len.d = d5;
+            writer_pointer.d = writer_pointer.q + block_len.q + COLUMN_DIMENSION;   
+          }
+          writer.d = writer.STACK5;
+        } 
+        else{
+          writer_pointer.d = writer_pointer.q + d5 + dist_from_left.q + COLUMN_DIMENSION; //reset back to the leftmost bit, then shift up 1 row
+          dist_from_left.d = stack4_encoded[7:4];
+          height.d = stack4_encoded[3:0];
+          block_len.d = d4;  
+          writer.d = writer.STACK4;
+        }
+      
+      writer.STACK4: 
+        ram.write_en = b1;
+        if (height.q){ 
+          if(block_len.q){
+            writer_pointer.d = writer_pointer.q - 1;
+            ram.waddr = writer_pointer.q;
+            block_len.d = block_len.q - 1;
+            ram.write_data = BLOCK_COLOR; // set pixel to light up
+          }
+          else{
+            height.d = height.q - 1;
+            block_len.d = d4;
+            writer_pointer.d = writer_pointer.q + block_len.q + COLUMN_DIMENSION;   
+          }
+          writer.d = writer.STACK4;
+        } 
+        else{
+          writer_pointer.d = writer_pointer.q + d4 + dist_from_left.q + COLUMN_DIMENSION; //reset back to the leftmost bit, then shift up 1 row
+          dist_from_left.d = stack3_encoded[7:4];
+          height.d = stack3_encoded[3:0];
+          block_len.d = d3;  
+          writer.d = writer.STACK3;
+        }  
+        
+      writer.STACK3: 
+        ram.write_en = b1;
+        if (height.q){ 
+          if(block_len.q){
+            writer_pointer.d = writer_pointer.q - 1;
+            ram.waddr = writer_pointer.q;
+            block_len.d = block_len.q - 1;
+            ram.write_data = BLOCK_COLOR; // set pixel to light up
+          }
+          else{
+            height.d = height.q - 1;
+            block_len.d = d3;
+            writer_pointer.d = writer_pointer.q + block_len.q + COLUMN_DIMENSION;   
+          }
+          writer.d = writer.STACK3;
+        } 
+        else{
+          writer_pointer.d = writer_pointer.q + d3 + dist_from_left.q + COLUMN_DIMENSION; //reset back to the leftmost bit, then shift up 1 row
+          dist_from_left.d = stack2_encoded[7:4];
+          height.d = stack2_encoded[3:0];
+          block_len.d = d2;  
+          writer.d = writer.STACK2;
+        }   
+        
+      writer.STACK2: 
+        ram.write_en = b1;
+        if (height.q){ 
+          if(block_len.q){
+            writer_pointer.d = writer_pointer.q - 1;
+            ram.waddr = writer_pointer.q;
+            block_len.d = block_len.q - 1;
+            ram.write_data = BLOCK_COLOR; // set pixel to light up
+          }
+          else{
+            height.d = height.q - 1;
+            block_len.d = d2;
+            writer_pointer.d = writer_pointer.q + block_len.q + COLUMN_DIMENSION;   
+          }
+          writer.d = writer.STACK2;
+        } 
+        else{
+          writer_pointer.d = writer_pointer.q + d2 + dist_from_left.q + COLUMN_DIMENSION; //reset back to the leftmost bit, then shift up 1 row
+          dist_from_left.d = stack1_encoded[7:4];
+          height.d = stack1_encoded[3:0];
+          block_len.d = d1;  
+          writer.d = writer.STACK1;
+        }          
+      
+      writer.STACK1: 
+        ram.write_en = b1;
+        if (height.q){ 
+          if(block_len.q){
+            writer_pointer.d = writer_pointer.q - 1;
+            ram.waddr = writer_pointer.q;
+            block_len.d = block_len.q - 1;
+            ram.write_data = BLOCK_COLOR; // set pixel to light up
+          }
+          else{
+            height.d = height.q - 1;
+            block_len.d = d1;
+            writer_pointer.d = writer_pointer.q + block_len.q + COLUMN_DIMENSION;   
+          }
+          writer.d = writer.STACK1;
+        } 
+        else{
+          writer_pointer.d = writer_pointer.q + d1 + dist_from_left.q + COLUMN_DIMENSION;
+          dist_from_left.d = d16;
+          writer.d = writer.CUR_BLOCK;
+        }    
+       
+      writer.CUR_BLOCK: 
+        ram.write_en = b1;
+        if(dist_from_left.q){
+           ram.waddr = writer_pointer.q;
+           writer_pointer.d = writer_pointer.q - 1;
+           if(current_block[dist_from_left.q]){ram.write_data = BLOCK_COLOR;}
+           else{ram.write_data = BACKGROUND_COLOR;}
+           dist_from_left.d = dist_from_left.q - 1;
+           writer.d = writer.CUR_BLOCK;
+        }
+        else {
+          writer.d = writer.CUR_BLOCK;
+        }
+        
+      writer.IDLE:
+        ram.raddr = address;
+        out_encoding = ram.read_data;
+        debug_data = 0; // for debugging
+        writer.d = writer.IDLE; // remain in state
+        if (update_flag.q){
+            update_flag.d = 0;
+            writer.d = writer.INIT;
+        }
+        debug_data = c{b11, update_flag.q};
+      
+    }
+    
+  }
+}

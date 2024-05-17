@@ -1,0 +1,175 @@
+module au_top (
+    input clk,              // 100MHz clock
+    input rst_n,            // reset button (active low)
+    output led [8],         // 8 user controllable LEDs
+    input usb_rx,           // USB->Serial input
+    output outled, // HELP IT SHOULD WORK
+    input externalbutton,
+    
+    output usb_tx,          // USB->Serial output
+    output io_led [3][8],   // LEDs on IO Shield
+    output io_seg [8],      // 7-segment LEDs on IO Shield
+    output io_sel [4],      // Digit select on IO Shield
+    input io_button[5],    // 5 buttons on IO Shield
+    input io_dip [3][8]     // DIP switches on IO Shield
+  ) {
+  // CONNECTS WHATEVER SOURCES WE HAVE TO EXTERNAL INPUT OUTPUTS
+    sig rst;                  // reset signal
+
+    .clk(clk) {
+    // The reset conditioner is used to synchronize the reset signal to the FPGA
+    // clock. This ensures the entire FPGA comes out of reset at the same time.
+    .rst(rst){
+      multi_seven_seg seg;
+      blockit_beta gameMachine;
+      counter ramclock(#SIZE(1),#DIV(28));
+
+
+    }
+      reset_conditioner reset_cond; // TODO: changing reset button to io_button[1] (center button)
+      button_conditioner alchitrybutton; // test button using alchitry
+      edge_detector buttonpress(#RISE(1), #FALL(0)); // edge detector of externalbutton 
+      // edge_detector ram_updater(#RISE(1), #FALL(0)); // takes slowclock4th.value as input 
+      multi_dec_ctr dec_ctr;
+
+    }  
+    const COLUMN_DIMENSION = 16; // how many "columns"? 
+    const ROW_DIMENSION = 16; // how many "rows"?
+    const PIXEL_COUNT = COLUMN_DIMENSION *  ROW_DIMENSION;   
+    const ENCODING_AMOUNT = 4; // how many different encodings are used? As example, we use 4 colors, hence ENCODING_AMOUNT is 4
+
+    // OFF WHITE (11), DIM BLUE (10), DIM RED (01), OFF(00)
+    const LEDCOLOR = {24h0F0F0F, 24h030000, 24h000300, 24h000000};
+
+    fsm led_state(.clk(clk), .rst(rst)) = {IDLE, UPDATE, REFRESH};
+    ws2812b_writer led_strip(#PIXEL_COUNT(PIXEL_COUNT), .clk(clk), .rst(rst));   
+  
+    reverser index_reverser(#COLUMN_DIMENSION(COLUMN_DIMENSION), #ROW_DIMENSION(ROW_DIMENSION));
+  
+    data_ram ram(#ROW_DIMENSION(ROW_DIMENSION), #ENCODING_AMOUNT(ENCODING_AMOUNT), #COLUMN_DIMENSION(COLUMN_DIMENSION), .clk(clk), .rst(rst));
+    dff update_ram_flag(#INIT(0), .clk(clk), .rst(rst));  
+
+
+  always {
+    reset_cond.in = ~rst_n;   // input raw inverted reset signal
+    rst = reset_cond.out;     // conditioned reset
+    io_led = 3x{{h00}};       // turn all LED off at first
+    usb_tx = usb_rx;          // loop serial port
+    io_seg = 8hff; // connect segments to the driver
+    io_sel = 4hf; // connect digit select to the driver
+
+    
+    led = c{3b0, externalbutton};  // connect buttons to LEDs
+      
+    reset_cond.in = ~rst_n; // input raw inverted reset signal
+    rst = reset_cond.out;   // conditioned reset
+    
+    led = 8h00;             // turn LEDs off
+
+    usb_tx = usb_rx;        // echo the serial data
+      
+    alchitrybutton.in = externalbutton; // TODO: LINK TO EXTERNAL BUTTON WHICH IS LINKED TO ONE OF THE BANKS OF BR, ALSO INSTANTIATE THE CONNECTION IN CONSTRAINTS
+    buttonpress.in = alchitrybutton.out; 
+    gameMachine.buttonpress = buttonpress.out;
+    
+    dec_ctr.inc = gameMachine.decimal_counter_increase; // previously gameMachine.decimal_counter_increase
+    dec_ctr.rst = gameMachine.decimal_counter_rst;
+    seg.values = dec_ctr.digits;
+    io_seg = ~seg.seg;
+    io_sel = ~seg.sel;
+
+    
+    //io_led[2][0] = ram_updater.out;
+           // address 0 selected by default
+    case (io_dip[0]){
+    h00:
+      io_led[0] = gameMachine.currentrow[7:0];
+      io_led[1] = gameMachine.currentrow[15:8];
+    
+    h01:
+      io_led[0] = gameMachine.previousrow[7:0];
+      io_led[1] = gameMachine.previousrow[15:8];
+    
+    h02:
+      io_led[0] = gameMachine.score[7:0];
+      io_led[1] = gameMachine.score[15:8];
+    
+    h03:
+      io_led[0] = gameMachine.rowcounter[7:0];
+      io_led[1] = gameMachine.rowcounter[15:8];
+    h04:
+      io_led[0] = gameMachine.currenttimer[7:0];
+      io_led[1] = gameMachine.currenttimer[15:8];
+    h05:
+      io_led[0] = gameMachine.finaloutput[7:0];}
+    
+    led_strip.update = 0; // do not refresh by default
+    led_strip.clear = 0; // do not clear by default    
+    ram.update = 0; //choose slowclock1st to slowclock4th depending whether if we are sticking to not changing the row speed, or take the fastest row speed to update the ram_updater
+    ram.current_block = 0; // initialise ram values to remove errors
+    ram.stack1_encoded = 0;
+    ram.stack2_encoded = 0;
+    ram.stack3_encoded = 0;
+    ram.stack4_encoded = 0;
+    ram.stack5_encoded = 0;
+    ram.address = 0; 
+  
+    // connect reverser to led_strip 
+    index_reverser.original_pixel_address = led_strip.pixel_address;
+
+    index_reverser.activate = 1; // we use led matrix here as example, always activate index reverser
+    case (led_state.q){
+      led_state.UPDATE:
+             // when ram is ready, and led is idling at RESET led_state, we load the strip
+             if (ram.ready & led_strip.reset){
+                // clear flag 
+                update_ram_flag.d = 0;
+                led_state.d = led_state.REFRESH;
+                ram.address = index_reverser.effective_pixel_address;
+                    ram.stack5_encoded[15:0] = gameMachine.stack5;
+                    ram.stack4_encoded[15:0] = gameMachine.stack4;
+                    ram.stack3_encoded[15:0] = gameMachine.stack3;
+                    ram.stack2_encoded[15:0] = gameMachine.stack2;
+                    ram.stack1_encoded[15:0] = gameMachine.stack1;
+                    ram.current_block[15:0] = gameMachine.currentrow;
+
+                led_strip.update = 1;
+              }
+        
+        led[1:0] = b10;
+      
+      led_state.REFRESH:
+            // if at the last FPGA clock cycle for this bit, advance the address first because our RAM needs 1 additional clock cycle to work
+            if (led_strip.next_pixel){
+              index_reverser.original_pixel_address = led_strip.pixel_address + 1;
+            }
+            
+            // pass this to ram 
+            ram.address = index_reverser.effective_pixel_address;
+
+            // wait until we are all done in updating our LED;
+            if (led_strip.done){
+                led_state.d = led_state.IDLE;
+            }
+            led[1:0] = b11;
+        
+     led_state.IDLE:
+        if (update_ram_flag.q){ // if there's movement update or start button pressed
+            led_state.d = led_state.UPDATE;
+            ram.update = 1;  // send update signal to ram first, dont clear the update flag yet 
+        }
+        led[1:0] = b01;
+        
+    }
+    
+    led_strip.color = LEDCOLOR[ram.out_encoding]; 
+    outled = led_strip.led;    
+    
+    
+         //update 7segments
+    dec_ctr.inc = gameMachine.decimal_counter_increase;
+    dec_ctr.rst = gameMachine.decimal_counter_rst;
+    seg.values = dec_ctr.digits;
+    io_seg = ~seg.seg;
+    
+}

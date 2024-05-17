@@ -1,0 +1,125 @@
+module blockit_regfile  (
+    input clk,  // clock
+    input rst,  // reset
+    input write_address[4], // write address
+    input we, // write enable
+    input data[16], // data in
+    
+    
+    input read_address_a[4], //address port a 
+    input read_address_b[4], //address port b
+    output out_a[16], //read port a
+    output out_b[16], //read port b
+    
+    //debug
+    output timer[16],
+    output all_scores[32],
+    output all_buttons[4],
+    output counter_out[16]
+
+  ) 
+
+{
+    const Y_VALUES = {1111111111111111,
+                    1000000000000000,
+                    1100000000000000, 
+                    1110000000000000, 
+                    1111000000000000, 
+                    1111100000000000}; 
+  .clk(clk){
+    .rst(rst){
+      dff current_row[16](#INIT(Y_VALUES[0])); //init needs to be a constant value
+      dff previous_row[16](#INIT(Y_VALUES[5]));
+      dff block_direction[1](#INIT(0));
+      dff counter[16](#INIT(1));
+      dff score[16](#INIT(0));
+      dff combo_count[16](#INIT(0));
+      dff current_timer[16](#INIT(0));
+      dff stack_1[16](#INIT(0));
+      dff stack_2[16](#INIT(0));
+      dff stack_3[16](#INIT(0));
+      dff stack_4[16](#INIT(0));
+      dff stack_5[16](#INIT(0));
+      dff block_len[16](#INIT(0));
+      dff dist_from_left[16](#INIT(0));
+      dff temp[16](#INIT(0));  
+      dff temp_var[16](#INIT(0));
+
+    }
+  }
+  always {
+  
+    //write port
+    if (we){
+      case(write_address){
+        b0000 : current_row.d = data;
+        b0001 : previous_row.d = data;
+        b0010 : counter.d = data;
+        b0011 : score.d = data;
+        b0100 : combo_count.d = data;
+        b0101 : current_timer.d = data;
+        b0110 : block_direction.d = data;
+        b1000 : stack_1.d = data; 
+        b1001 : stack_2.d = data;
+        b1010 : stack_3.d = data;
+        b1011 : stack_4.d = data;
+        b1100 : stack_5.d = data;
+        b1101 : block_len.d = data;
+        b1110 : dist_from_left.d = data;
+        b1111 : temp.d = data;
+      }
+    }
+    
+      
+    //read port a
+    case(read_address_a){
+        b0000 : current_row.d = data;
+        b0001 : previous_row.d = data;
+        b0010 : counter.d = data;
+        b0011 : score.d = data;
+        b0100 : combo_count.d = data;
+        b0101 : current_timer.d = data;
+        b0110 : block_direction.d = data;
+        b1000 : stack_1.d = data; 
+        b1001 : stack_2.d = data;
+        b1010 : stack_3.d = data;
+        b1011 : stack_4.d = data;
+        b1100 : stack_5.d = data;
+        b1101 : block_len.d = data;
+        b1110 : dist_from_left.d = data;
+        b1111 : temp.d = data;
+        default : out_a = 0;
+      }
+  
+    
+    //read port b
+    case(read_address_b){
+        b0000 : current_row.d = data;
+        b0001 : previous_row.d = data;
+        b0010 : counter.d = data;
+        b0011 : score.d = data;
+        b0100 : combo_count.d = data;
+        b0101 : current_timer.d = data;
+        b0110 : block_direction.d = data;
+        b1000 : stack_1.d = data; 
+        b1001 : stack_2.d = data;
+        b1010 : stack_3.d = data;
+        b1011 : stack_4.d = data;
+        b1100 : stack_5.d = data;
+        b1101 : block_len.d = data;
+        b1110 : dist_from_left.d = data;
+        b1111 : temp.d = data;
+        default : out_b = 0;
+      }
+    
+      
+    
+    
+    //For debugging
+    all_scores[15:0] = p1_score.q;
+    all_scores[31:16] = p2_score.q;
+    all_buttons[1:0] = p1_buttonPress.q[1:0];
+    all_buttons[3:2] = p2_buttonPress.q[1:0];
+    timer = current_timer.q;
+    counter_out = current_counter.q;
+  }
